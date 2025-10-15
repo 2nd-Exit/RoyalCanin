@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Royal Canin Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        /* Custom scrollbar for better appearance */
+        .custom-scroll::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: #e2e8f0;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 10px;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+        .tab-button.active {
+            background-color: #a7f3d0; /* Tailwind green-200 */
+            color: #059669; /* Tailwind green-600 */
+            font-weight: 700;
+            border-bottom: 4px solid #059669;
+        }
+        .data-card {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            transition: all 0.3s ease;
+        }
+        .data-card:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+
+<div id="app" class="min-h-screen flex flex-col">
+    <!-- Header/Navigation Bar -->
+    <header class="bg-white shadow-md sticky top-0 z-10">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <span class="text-3xl font-bold text-green-600">🐾</span>
+                <h1 class="text-xl sm:text-2xl font-extrabold text-gray-800">Royal Canin Admin Portal</h1>
+            </div>
+            <div class="text-sm text-gray-600 truncate hidden md:block">
+                <span id="user-info">Loading user...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        
+        <!-- Tab Navigation -->
+        <div class="bg-white rounded-xl shadow-lg mb-6 p-1 flex justify-between overflow-x-auto">
+            <button class="tab-button flex-1 py-3 px-2 text-sm sm:text-base text-gray-600 rounded-lg hover:bg-gray-100 transition-colors duration-200 whitespace-nowrap" data-tab="animals">Animals</button>
+            <button class="tab-button flex-1 py-3 px-2 text-sm sm:text-base text-gray-600 rounded-lg hover:bg-gray-100 transition-colors duration-200 whitespace-nowrap" data-tab="cages">Cages</button>
+            <button class="tab-button flex-1 py-3 px-2 text-sm sm:text-base text-gray-600 rounded-lg hover:bg-gray-100 transition-colors duration-200 whitespace-nowrap" data-tab="food">Food Inventory</button>
+            <button class="tab-button flex-1 py-3 px-2 text-sm sm:text-base text-gray-600 rounded-lg hover:bg-gray-100 transition-colors duration-200 whitespace-nowrap" data-tab="employees">Employees</button>
+        </div>
+
+        <!-- Tab Content -->
+        <div id="content-container">
+            <!-- Content will be injected here based on the active tab -->
+            <div class="text-center py-10 text-gray-500">
+                <div id="loading-spinner" class="hidden">
+                    <div class="w-12 h-12 border-4 border-green-500 border-t-transparent border-solid rounded-full animate-spin mx-auto mb-4"></div>
+                    Loading data...
+                </div>
+                <div id="welcome-message">
+                    <h2 class="text-2xl font-semibold mb-2 text-gray-700">Welcome to the Admin Dashboard</h2>
+                    <p>Please select a tab to view and manage shelter records.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer for User ID on small screens -->
+    <footer class="bg-gray-800 text-white p-4 text-center md:hidden">
+        <span class="text-xs">User ID: <span id="user-id-footer">...</span></span>
+    </footer>
+
+    <!-- Toast/Notification Area -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+</div>
+
+<!-- Firebase Setup Scripts -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, onSnapshot, query, doc, setDoc, deleteDoc, runTransaction, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // --- GLOBAL VARIABLES (Mandatory Canvas Environment Variables) ---
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-animal-shelter-app';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    
+    let app, db, auth, userId = null;
+    let isAuthReady = false;
+
+    // --- Utility Functions ---
+
+    /** Shows a non-blocking toast notification. */
+    function showToast(message, type = 'success') {
+        const toastContainer = document.getElementById('toast-container');
+        const color = type === 'error' ? 'bg-red-500' : 'bg-green-500';
+        const icon = type === 'error' ? '❌' : '✅';
+
+        const toast = document.createElement('div');
+        toast.className = `${color} text-white px-4 py-3 rounded-xl data-card flex items-center space-x-2 transition-all duration-300 transform translate-x-full opacity-0`;
+        toast.innerHTML = `${icon} <span>${message}</span>`;
+        
+        toastContainer.appendChild(toast);
+
+        // Animate in
+        setTimeout(() => {
+            toast.classList.remove('translate-x-full', 'opacity-0');
+            toast.classList.add('translate-x-0', 'opacity-100');
+        }, 10);
+
+        // Animate out and remove
+        setTimeout(() => {
+            toast.classList.remove('translate-x-0', 'opacity-100');
+            toast.classList.add('translate-x-full', 'opacity-0');
+            toast.addEventListener('transitionend', () => toast.remove());
+        }, 5000);
+    }
+
+    /** Converts a collection name to the Firestore path for public data. */
+    function getPublicCollectionPath(collectionName) {
+        return `artifacts/${appId}/public/data/${collectionName}`;
+    }
+
+    /** Converts a collection name to the Firestore path for private data (user-specific). */
+    function getPrivateCollectionPath(collectionName) {
+        // We will store admin data as private to this user for security demonstration
+        return `artifacts/${appId}/users/${userId}/${collectionName}`;
+    }
+
+    // --- Firebase Initialization and Authentication ---
+
+    if (firebaseConfig) {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+            } else {
+                // Sign in anonymously if no token provided or token fails
+                try {
+                    const anonUser = await signInAnonymously(auth);
+                    userId = anonUser.user.uid;
+                } catch (error) {
+                    console.error("Anonymous sign-in failed:", error);
+                    showToast("Authentication failed. Check console for details.", 'error');
+                }
+            }
+            
+            // Final check after potential sign-in
+            if (userId) {
+                document.getElementById('user-info').textContent = `User ID: ${userId}`;
+                document.getElementById('user-id-footer').textContent = userId;
+                isAuthReady = true;
+                // Automatically load the first tab after auth is ready
+                document.querySelector('[data-tab="animals"]').click();
+            } else {
+                document.getElementById('user-info').textContent = 'User ID: N/A';
+            }
+        });
+
+        // Use custom token if available
+        if (initialAuthToken) {
+            signInWithCustomToken(auth, initialAuthToken).catch(error => {
+                console.error("Custom token sign-in failed, proceeding with anonymous sign-in.", error);
+                // The onAuthStateChanged listener handles falling back to anonymous
+            });
+        }
+    } else {
+        document.getElementById('user-info').textContent = 'Firebase Config Missing!';
+        showToast("Firebase configuration is missing.", 'error');
+    }
+
+    // --- Core Data Management Logic (CRUD Simulation via Firestore) ---
+
+    // Note: Since the SQL schema uses INT IDs, we will use the Firestore document ID (string)
+    // as the primary key/ID for simplicity in this web app.
+
+    const schemas = {
+        animals: {
+            title: 'Animal Records',
+            collection: getPublicCollectionPath('ANIMAL'),
+            fields: ['animalName', 'species', 'breed', 'age', 'gender', 'arrivalDate', 'adoptionStatus', 'healthCondition', 'cageID', 'employeeID'],
+            defaults: { age: 0, gender: 'M', adoptionStatus: 'Available', healthCondition: 'Healthy', cageID: '', employeeID: '' }
+        },
+        cages: {
+            title: 'Cage Management',
+            collection: getPublicCollectionPath('CAGE'),
+            fields: ['locationZone', 'size', 'cageStatus'],
+            defaults: { locationZone: 'Dog Wing A', size: 'Medium', cageStatus: 'Available' }
+        },
+        food: {
+            title: 'Food Inventory',
+            collection: getPublicCollectionPath('FOOD'),
+            fields: ['foodName', 'foodType', 'expirationDate', 'price', 'quantityAvailable'],
+            defaults: { foodName: '', foodType: 'Dry Dog Food', price: 0.00, quantityAvailable: 0, expirationDate: new Date().toISOString().split('T')[0] }
+        },
+        employees: {
+            // Note: Employee data is complex (FK to PERSON, deptID, supervisorID).
+            // We will simplify and store core employee data for demonstration.
+            title: 'Employee Directory (Simplified)',
+            collection: getPublicCollectionPath('EMPLOYEE'),
+            fields: ['firstName', 'lastName', 'position', 'deptID', 'hireDate', 'salary'],
+            defaults: { firstName: '', lastName: '', position: 'Technician', deptID: 1, hireDate: new Date().toISOString().split('T')[0], salary: 40000.00 }
+        }
+    };
+
+    let currentUnsubscribe = null;
+
+    /** Fetches and renders data for the current tab. */
+    function loadData(tabKey) {
+        if (!isAuthReady || !db) return;
+
+        const { title, collection } = schemas[tabKey];
+        const contentContainer = document.getElementById('content-container');
+        document.getElementById('welcome-message').classList.add('hidden');
+        document.getElementById('loading-spinner').classList.remove('hidden');
+
+        // Stop listening to previous collection
+        if (currentUnsubscribe) {
+            currentUnsubscribe();
+            currentUnsubscribe = null;
+        }
+
+        // Set up real-time listener
+        const q = query(collection(db, collection));
+        
+        currentUnsubscribe = onSnapshot(q, (snapshot) => {
+            const data = [];
+            snapshot.forEach(doc => {
+                data.push({ id: doc.id, ...doc.data() });
+            });
+            renderTable(tabKey, title, data);
+            document.getElementById('loading-spinner').classList.add('hidden');
+        }, (error) => {
+            console.error("Firestore listen error:", error);
+            renderError("Failed to load data. Please check connection and permissions.");
+            document.getElementById('loading-spinner').classList.add('hidden');
+            showToast("Data loading failed.", 'error');
+        });
+    }
+    
+    /** Renders an error message if data loading fails. */
+    function renderError(message) {
+        const contentContainer = document.getElementById('content-container');
+        contentContainer.innerHTML = `
+            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative data-card">
+                <strong class="font-bold">Error!</strong>
+                <span class="block sm:inline">${message}</span>
+            </div>
+        `;
+    }
+
+    /** Renders the full data table and input form for the active tab. */
+    function renderTable(tabKey, title, data) {
+        const { fields, defaults } = schemas[tabKey];
+        const contentContainer = document.getElementById('content-container');
+        const headers = fields.map(f => {
+            // Simple title case for headers
+            return f.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+        });
+
+        const tableRows = data.map(item => `
+            <tr id="row-${item.id}" class="hover:bg-gray-50 transition duration-150">
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${item.id}</td>
+                ${fields.map(field => `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <span id="field-${item.id}-${field}">${item[field] || '-'}</span>
+                    </td>
+                `).join('')}
+                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                    <button onclick="editRecord('${tabKey}', '${item.id}')" class="text-indigo-600 hover:text-indigo-900 transition duration-150 p-1 rounded-full hover:bg-indigo-100" title="Edit">
+                        <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    </button>
+                    <button onclick="deleteRecord('${tabKey}', '${item.id}', '${item.animalName || item.foodName || item.lastName || item.locationZone}')" class="text-red-600 hover:text-red-900 transition duration-150 p-1 rounded-full hover:bg-red-100" title="Delete">
+                        <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+
+        // Generate input fields for the "Add New" form
+        const formInputs = fields.map(field => {
+            const label = field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+            let type = 'text';
+            if (field.includes('Date')) type = 'date';
+            else if (field.includes('ID') || field.includes('age') || field.includes('quantity')) type = 'number';
+            else if (field.includes('salary') || field.includes('price') || field.includes('weight')) type = 'number'; // Allow decimals for salary/price/weight
+
+            return `
+                <div class="w-full sm:w-1/2 lg:w-1/3 p-2">
+                    <label for="${tabKey}-${field}" class="block text-sm font-medium text-gray-700">${label}</label>
+                    <input type="${type}" id="${tabKey}-${field}" name="${field}"
+                           value="${defaults[field] !== undefined ? defaults[field] : ''}" 
+                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm p-2 border"
+                           ${(type === 'number' && (field.includes('salary') || field.includes('price') || field.includes('weight'))) ? 'step="0.01"' : (type === 'number' ? 'step="1"' : '')}
+                           required>
+                </div>
+            `;
+        }).join('');
+
+        contentContainer.innerHTML = `
+            <div class="space-y-8">
+                <!-- Data Table -->
+                <div class="bg-white rounded-xl shadow-lg overflow-hidden data-card">
+                    <h2 class="text-xl font-semibold p-6 border-b border-gray-200 text-gray-800">${title}</h2>
+                    <div class="overflow-x-auto custom-scroll max-h-[60vh]">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50 sticky top-0">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                                    ${headers.map(header => `
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${header}</th>
+                                    `).join('')}
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${data.length > 0 ? tableRows : `
+                                    <tr>
+                                        <td colspan="${fields.length + 2}" class="px-6 py-4 text-center text-gray-500">No records found.</td>
+                                    </tr>
+                                `}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Add New Record Form -->
+                <div class="bg-white rounded-xl shadow-lg p-6 data-card">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800">Add New Record</h2>
+                    <form id="add-record-form" onsubmit="handleFormSubmit(event, '${tabKey}')">
+                        <div class="flex flex-wrap -m-2">
+                            ${formInputs}
+                        </div>
+                        <div class="pt-6 border-t mt-4">
+                            <button type="submit" class="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center justify-center space-x-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                <span>Add New ${tabKey.slice(0, -1).toUpperCase()}</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        `;
+    }
+
+    /** Handles form submission for adding or updating a record. */
+    window.handleFormSubmit = async (event, tabKey, recordId = null) => {
+        event.preventDefault();
+        if (!isAuthReady) return showToast("Authentication not ready. Please wait.", 'error');
+
+        const { collection, fields } = schemas[tabKey];
+        const formData = {};
+        let isValid = true;
+
+        fields.forEach(field => {
+            const input = document.getElementById(`${tabKey}-${field}`);
+            if (input) {
+                let value = input.value;
+                // Convert numbers and decimals to proper types
+                if (input.type === 'number') {
+                    value = input.step === '0.01' ? parseFloat(value) : parseInt(value, 10);
+                }
+                formData[field] = value;
+                if (!value && input.required) {
+                    isValid = false;
+                }
+            }
+        });
+
+        if (!isValid) {
+            return showToast("Please fill in all required fields.", 'error');
+        }
+
+        const action = recordId ? 'Updated' : 'Added';
+        
+        try {
+            if (recordId) {
+                // Update existing record
+                await setDoc(doc(db, collection, recordId), formData, { merge: true });
+            } else {
+                // Add new record (Firestore generates unique ID)
+                await setDoc(doc(db, collection, (await getDocs(collection(db, collection))).size + 1 + ""), formData);
+                
+                // Clear form inputs after successful addition
+                fields.forEach(field => {
+                    const input = document.getElementById(`${tabKey}-${field}`);
+                    if (input && input.type !== 'submit') {
+                        input.value = schemas[tabKey].defaults[field] !== undefined ? schemas[tabKey].defaults[field] : '';
+                    }
+                });
+            }
+            showToast(`${schemas[tabKey].title} record ${action} successfully!`);
+            closeModal();
+
+        } catch (e) {
+            console.error(`Error ${action.toLowerCase()} record: `, e);
+            showToast(`Error ${action.toLowerCase()} record. Check console.`, 'error');
+        }
+    };
+    
+    /** Displays a modal form for editing a record. */
+    window.editRecord = async (tabKey, recordId) => {
+        if (!isAuthReady) return showToast("Authentication not ready. Please wait.", 'error');
+
+        const { collection, fields } = schemas[tabKey];
+        const docRef = doc(db, collection, recordId);
+        
+        let recordData = {};
+        try {
+            // Get current data from the table (or fetch, but using existing row data is faster)
+            fields.forEach(field => {
+                const element = document.getElementById(`field-${recordId}-${field}`);
+                if (element) {
+                    recordData[field] = element.textContent;
+                }
+            });
+        } catch(e) {
+            console.warn("Could not retrieve all data from DOM, using default fallback logic.", e);
+        }
+
+        const modalContent = fields.map(field => {
+            const label = field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+            let type = 'text';
+            if (field.includes('Date')) type = 'date';
+            else if (field.includes('ID') || field.includes('age') || field.includes('quantity')) type = 'number';
+            else if (field.includes('salary') || field.includes('price') || field.includes('weight')) type = 'number';
+
+            let value = recordData[field] !== undefined ? recordData[field] : '';
+            // Handle date format for input value
+            if (type === 'date' && value) {
+                value = new Date(value).toISOString().split('T')[0];
+            }
+            
+            return `
+                <div class="mb-4">
+                    <label for="modal-${field}" class="block text-sm font-medium text-gray-700">${label}</label>
+                    <input type="${type}" id="modal-${field}" name="${field}" value="${value}"
+                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm p-2 border"
+                           ${(type === 'number' && (field.includes('salary') || field.includes('price') || field.includes('weight'))) ? 'step="0.01"' : (type === 'number' ? 'step="1"' : '')}
+                           required>
+                </div>
+            `;
+        }).join('');
+
+        const formHtml = `
+            <h3 class="text-xl font-bold mb-4">Edit Record: ID ${recordId}</h3>
+            <form id="edit-record-form" onsubmit="handleModalSubmit(event, '${tabKey}', '${recordId}')">
+                ${modalContent}
+                <div class="flex justify-end space-x-3 mt-6">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition">Save Changes</button>
+                </div>
+            </form>
+        `;
+
+        showModal(formHtml);
+    };
+
+    /** Handles submission from the modal form. */
+    window.handleModalSubmit = async (event, tabKey, recordId) => {
+        event.preventDefault();
+        if (!isAuthReady) return showToast("Authentication not ready. Please wait.", 'error');
+
+        const { collection, fields } = schemas[tabKey];
+        const formData = {};
+        let isValid = true;
+
+        fields.forEach(field => {
+            const input = document.getElementById(`modal-${field}`);
+            if (input) {
+                let value = input.value;
+                // Convert numbers and decimals to proper types
+                if (input.type === 'number') {
+                    value = input.step === '0.01' ? parseFloat(value) : parseInt(value, 10);
+                }
+                formData[field] = value;
+                if (!value && input.required) {
+                    isValid = false;
+                }
+            }
+        });
+
+        if (!isValid) {
+            return showToast("Please fill in all required fields.", 'error');
+        }
+
+        try {
+            await setDoc(doc(db, collection, recordId), formData, { merge: true });
+            showToast(`${schemas[tabKey].title} record updated successfully!`);
+            closeModal();
+        } catch (e) {
+            console.error("Error updating record:", e);
+            showToast("Error updating record. Check console.", 'error');
+        }
+    }
+
+
+    /** Displays a confirmation modal before deleting. */
+    window.deleteRecord = (tabKey, recordId, name) => {
+        const modalHtml = `
+            <h3 class="text-xl font-bold mb-4 text-red-600">Confirm Deletion</h3>
+            <p class="mb-6">Are you sure you want to delete the **${schemas[tabKey].title}** record for **${name}** (ID: ${recordId})?</p>
+            <div class="flex justify-end space-x-3">
+                <button type="button" onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition">Cancel</button>
+                <button type="button" onclick="confirmDelete('${tabKey}', '${recordId}')" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">Yes, Delete</button>
+            </div>
+        `;
+        showModal(modalHtml);
+    };
+
+    /** Executes the deletion after confirmation. */
+    window.confirmDelete = async (tabKey, recordId) => {
+        if (!isAuthReady) return showToast("Authentication not ready. Please wait.", 'error');
+        const { collection } = schemas[tabKey];
+        
+        try {
+            await deleteDoc(doc(db, collection, recordId));
+            showToast(`${schemas[tabKey].title} record deleted successfully!`);
+            closeModal();
+        } catch (e) {
+            console.error("Error deleting record:", e);
+            showToast("Error deleting record. Check console.", 'error');
+            closeModal();
+        }
+    };
+    
+    // --- Modal Functions ---
+    function showModal(contentHtml) {
+        let modal = document.getElementById('global-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'global-modal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 transition-opacity duration-300 opacity-0';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl p-6 w-11/12 max-w-lg transform scale-95 transition-transform duration-300">
+                    <div id="modal-content"></div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            // Close on backdrop click
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) closeModal();
+            });
+        }
+        document.getElementById('modal-content').innerHTML = contentHtml;
+        // Animate in
+        setTimeout(() => {
+            modal.classList.remove('opacity-0');
+            modal.querySelector('div:first-child').classList.remove('scale-95');
+            modal.querySelector('div:first-child').classList.add('scale-100');
+        }, 10);
+    }
+
+    window.closeModal = () => {
+        const modal = document.getElementById('global-modal');
+        if (modal) {
+            // Animate out
+            modal.classList.add('opacity-0');
+            modal.querySelector('div:first-child').classList.remove('scale-100');
+            modal.querySelector('div:first-child').classList.add('scale-95');
+            setTimeout(() => modal.remove(), 300);
+        }
+    };
+
+
+    // --- Event Listeners and Initial Load ---
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const tabButtons = document.querySelectorAll('.tab-button');
+        const container = document.getElementById('content-container');
+
+        tabButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                // Remove active class from all buttons
+                tabButtons.forEach(btn => btn.classList.remove('active'));
+                
+                // Add active class to the clicked button
+                e.currentTarget.classList.add('active');
+                
+                // Load the data for the selected tab
+                const tabKey = e.currentTarget.getAttribute('data-tab');
+                if (isAuthReady) {
+                    loadData(tabKey);
+                } else {
+                    document.getElementById('welcome-message').classList.remove('hidden');
+                    document.getElementById('loading-spinner').classList.add('hidden');
+                    container.innerHTML = `<div class="text-center py-10 text-gray-500">Waiting for user authentication...</div>`;
+                }
+            });
+        });
+
+        // Set the initial active tab and display a welcome message while authenticating
+        if (tabButtons.length > 0) {
+            tabButtons[0].classList.add('active');
+        }
+
+    });
+</script>
+
+</body>
+</html>
